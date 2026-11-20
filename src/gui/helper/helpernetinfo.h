@@ -1,5 +1,4 @@
 // DiE Helper (fork addition): static .NET metadata review: obfuscated names with readable aliases, protector markers, high-entropy IL bodies, user strings.
-// STATUS: done (written, not compiled yet)
 // Reads the metadata as data only; the assembly is never loaded, JIT-compiled or executed. No GUI code; safe on a worker thread.
 #ifndef HELPERNETINFO_H
 #define HELPERNETINFO_H

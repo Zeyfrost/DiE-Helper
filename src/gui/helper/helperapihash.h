@@ -1,5 +1,4 @@
 // DiE Helper (fork addition): finds API-hashing constants (ror13, Metasploit block_api ror13+module, crc32, djb2, fnv1a32, sdbm) and dynamic API resolution call sites.
-// STATUS: done (written, not compiled yet)
 // Static only: code is disassembled (never executed or emulated); the API-name database is built once from the export tables of
 // System32 DLLs, which are read as data files, never loaded. No GUI code; safe on a worker thread.
 #ifndef HELPERAPIHASH_H

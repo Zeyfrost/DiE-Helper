@@ -1,5 +1,4 @@
 // DiE Helper (fork addition): static .NET metadata review: obfuscated names with readable aliases, protector markers, high-entropy IL bodies, user strings.
-// STATUS: done (written, not compiled yet)
 #include "helpernetinfo.h"
 
 #include <QFile>

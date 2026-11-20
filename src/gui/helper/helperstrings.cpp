@@ -1,5 +1,4 @@
 // DiE Helper (fork addition): static recovery of hidden strings (stack strings, single-byte XOR/ADD/ROL and rolling-XOR encoded strings, .NET #US).
-// STATUS: done (written, not compiled yet)
 #include "helperstrings.h"
 
 #include <QFile>

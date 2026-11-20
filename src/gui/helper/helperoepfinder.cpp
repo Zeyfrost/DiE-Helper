@@ -1,6 +1,5 @@
 // DiE Helper (fork addition): static OEP finder - bounded disassembly walk of the unpacking stub from the entry point plus
 // tail-transfer rules (pushad/popad + jmp, push/ret, mov reg/jmp reg, jmp [mem], raw packer tails). Nothing is executed or emulated.
-// STATUS: done, not compiled yet (not in helper.cmake)
 #include "helperoepfinder.h"
 
 #include <QFile>

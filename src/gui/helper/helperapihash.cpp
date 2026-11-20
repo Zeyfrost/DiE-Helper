@@ -1,5 +1,4 @@
 // DiE Helper (fork addition): finds API-hashing constants (ror13, Metasploit block_api ror13+module, crc32, djb2, fnv1a32, sdbm) and dynamic API resolution call sites.
-// STATUS: done (written, not compiled yet)
 #include "helperapihash.h"
 
 #include <QDir>

@@ -1,5 +1,4 @@
 // DiE Helper (fork addition): static recovery of hidden strings (stack strings, single-byte XOR/ADD/ROL and rolling-XOR encoded strings, .NET #US).
-// STATUS: done (written, not compiled yet)
 // Reads the file as data only: the code is disassembled, never executed or emulated. No GUI code; safe on a worker thread.
 #ifndef HELPERSTRINGS_H
 #define HELPERSTRINGS_H

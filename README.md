@@ -1,10 +1,16 @@
-[![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=NF3FBD3KHMXDN)
-[![GitHub tag (latest SemVer)](https://img.shields.io/github/tag/horsicq/DIE-engine.svg)](http://ntinfo.biz)
-[![GitHub All Releases](https://img.shields.io/github/downloads/horsicq/DIE-engine/total.svg)](http://ntinfo.biz)
-[![gitlocalized ](https://gitlocalize.com/repo/4736/whole_project/badge.svg)](https://gitlocalize.com/repo/4736/whole_project?utm_source=badge)
+# DiE-Helper
 
-# DIE-engine
-GUI & console sources for Detect It Easy(DiE): https://github.com/horsicq/Detect-It-Easy/
+A fork of [Detect It Easy](https://github.com/horsicq/Detect-It-Easy) (the [DIE-engine](https://github.com/horsicq/DIE-engine) GUI and console sources) that shows **how** an EXE or DLL is packed or obfuscated, and helps unpack it. All analysis is static: files are read, never run.
+
+What it adds to DiE:
+- **A Packing tab** next to the detection list: a verdict, a colour-coded section map (entropy, flags, entry point), ranked evidence with clickable hex/disassembly locations, and unpacking hints per packer.
+- **Static unpacking**: DiE's built-in unpackers, a UPX header repair, an OEP finder, and a generic decompressor that rebuilds a PE. It restores UPX 5 files including relocations and imports.
+- **Deobfuscation views**: recovered strings, API-hash resolution, and a .NET view for obfuscated names.
+- **Tools**: PE edits on copies, HTML/Markdown/JSON reports, a custom-signature maker, batch scanning, and optional external tools (upx, de4dot).
+
+Build: see [Build (Windows, MSVC)](#build-windows-msvc). Details of every feature are in the section below.
+
+Detect It Easy is created and maintained by [horsicq](https://github.com/horsicq). This is an independent, unofficial fork that is not affiliated with the original project. The original MIT license and copyright are kept in [LICENSE](LICENSE).
 
 ---
 
@@ -130,6 +136,13 @@ They are for scanning only.
 | Hook points in existing files (marked `[Helper]`) | `dep/die_widget/die_widget.*` (signals `resultsReady`/`resultSelected`/`scanCleared`, `addResultTab`), `dep/FormatWidgets/formatswidget.*` (forwarding, getters), `src/gui/guimainwindow.*`, `src/gui/dialogoptions.*`, `src/gui/diegui.cmake` |
 
 ---
+
+# Original DIE-engine README
+
+[![GitHub tag (latest SemVer)](https://img.shields.io/github/tag/horsicq/DIE-engine.svg)](http://ntinfo.biz)
+[![GitHub All Releases](https://img.shields.io/github/downloads/horsicq/DIE-engine/total.svg)](http://ntinfo.biz)
+
+GUI & console sources for Detect It Easy (DiE): https://github.com/horsicq/Detect-It-Easy/ . To support the original author, see the [Detect It Easy repository](https://github.com/horsicq/Detect-It-Easy).
 
 ## Optional PEiD engine
 
