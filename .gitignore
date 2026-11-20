@@ -1,0 +1,12 @@
+# Build output (build_helper_win64.cmd)
+/_build/
+/release/
+
+# Test samples: keep the sources and generators (_samples/src, *.py, *.cmd), not the built binaries.
+# Rebuild them with _samples\build_samples.cmd (they are only ever scanned, never run).
+/_samples/*.exe
+/_samples/*.dll
+/_samples/*.obj
+/_samples/*.lib
+/_samples/*.exp
+/_samples/__pycache__/

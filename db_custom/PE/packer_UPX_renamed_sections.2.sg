@@ -1,0 +1,89 @@
+// Detect It Easy: detection rule file
+// Author: DiE Helper fork (custom DB)
+
+// UPX-packed PE whose sections were renamed (UPX0/UPX1 -> arbitrary names).
+// Malware does this so that "upx -d" and name-based checks fail.
+// Files that still have UPX0/UPX1 are left to the stock db/PE/packer_UPX.2.sg.
+//
+// Logic:
+//   1. skip .NET and files with a section named UPX0 or UPX1;
+//   2. classic UPX layout: section 0 has (almost) no raw data but a big
+//      virtual size; EP is in section 1 or in the last section; the EP section
+//      is executable + writable and its raw data has entropy >= 7.0;
+//   3. plus evidence: a UPX EP stub (patterns from packer_UPX.2.sg) or the
+//      "UPX!" pack header in the headers area.
+// sOptions lists the real names of the two sections, sVersion comes from the
+// version string stored just before "UPX!" when it looks valid.
+
+meta("packer", "UPX (renamed sections)");
+
+var UPX_MAX_RAW_SECTION0 = 0x200,   // "tiny" raw size of the empty UPX0 section
+    UPX_MIN_ENTROPY = 7.0,
+    UPX_HEADER_SCAN_SIZE = 0x1000,  // "UPX!" lives in the PE header area
+    SCN_EXEC_WRITE = 0xA0000000;    // IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_WRITE
+
+function isUPXStubAtEP() {
+    if (!PE.is64()) {
+        // PUSHAD; MOV ESI, ...; LEA EDI, [ESI + ...]; PUSH EDI (DLL stubs start with CMP [ESP+8],1)
+        if (PE.compareEP("60BE........8DBE........57", PE.compareEP("807C") ? 27 : 0)) return true;
+        // UPX 0.70
+        if (PE.compareEP("60e8000000005883e8..508db8........578db0........83cd..31db9090909001db75")) return true;
+    } else {
+        // push rbx/rsi/rdi/rbp; lea rsi, [...]; lea rdi, [rsi + ...]; push rdi (DLL stubs start with MOV ...)
+        if (PE.compareEP("53565755488D35........488DBE........57", PE.compareEP("4889") ? 24 : 0)) return true;
+    }
+    return false;
+}
+
+function findUPXHeader() {
+    var nSize = Math.min(UPX_HEADER_SCAN_SIZE, PE.getSize());
+    if (nSize <= 4) return -1;
+    return PE.findString(0, nSize, "UPX!");
+}
+
+function sectionLabel(oSection) {
+    return oSection.Name ? oSection.Name : "<empty>";
+}
+
+function detect() {
+    if (PE.isNet()) return;
+    if (PE.isSectionNamePresent("UPX0") || PE.isSectionNamePresent("UPX1")) return;
+
+    var nSections = PE.getNumberOfSections();
+    if (nSections < 2) return;
+
+    // Section 0: the empty UPX0 placeholder the stub decompresses into.
+    var oFirst = PE.section[0];
+    if (oFirst.FileSize > UPX_MAX_RAW_SECTION0) return;
+    if (oFirst.VirtualSize == 0 || oFirst.VirtualSize <= oFirst.FileSize) return;
+
+    // EP section: UPX1 (packed data + stub), normally section 1.
+    var nEPSection = PE.getEntryPointSection();
+    if (nEPSection != 1 && nEPSection != nSections - 1) return; // also rejects -1 (EP outside sections)
+
+    var oEP = PE.section[nEPSection];
+    if (oEP.FileSize == 0) return;
+    if (!oEP.hasFlags(SCN_EXEC_WRITE)) return;
+
+    var nEntropySize = Math.min(oEP.FileSize, PE.getSize() - oEP.FileOffset);
+    if (nEntropySize <= 0) return;
+    if (PE.calculateEntropy(oEP.FileOffset, nEntropySize) < UPX_MIN_ENTROPY) return;
+
+    // Evidence: UPX stub at EP or "UPX!" pack header.
+    var bStub = isUPXStubAtEP(),
+        nHeader = findUPXHeader();
+    if (!bStub && nHeader == -1) return;
+
+    if (nHeader >= 5) {
+        // Layout: "<ver>\0UPX!" e.g. "3.96\0UPX!"
+        var sVer = PE.getString(nHeader - 5, 4);
+        if (/^[0-9]\.[0-9]{2}$/.test(sVer)) {
+            sVersion = sVer;
+        }
+    }
+
+    sOptions = "sections: " + sectionLabel(oFirst) + "," + sectionLabel(oEP);
+    bDetected = true;
+
+    return result();
+}

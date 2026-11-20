@@ -45,6 +45,7 @@ class GuiMainWindow;
 QT_END_NAMESPACE
 
 class QProgressDialog;
+class HelperPackingView;  // [Helper]
 
 class GuiMainWindow : public QMainWindow {
     Q_OBJECT
@@ -114,5 +115,6 @@ private:
     QProgressDialog *m_pUpdateProgress;
     bool m_bUpdateCancelled;
     bool m_bScanRunning;
+    HelperPackingView *m_pHelperView;  // [Helper] "Packing" tab
 };
 #endif  // GUIMAINWINDOW_H

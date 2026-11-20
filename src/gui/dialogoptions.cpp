@@ -53,6 +53,10 @@ DialogOptions::DialogOptions(QWidget *pParent, XOptions *pOptions, XOptions::GRO
     ui->widgetOptions->addPage(m_pXInfoDBOptionsWidget, tr("Info"));
     m_pXInfoDBOptionsWidget->setOptions(pOptions);
 
+    // [Helper] stores into helper.ini, not into XOptions
+    m_pHelperOptionsWidget = new HelperOptionsWidget(this);
+    ui->widgetOptions->addPage(m_pHelperOptionsWidget, tr("Helper"));
+
     ui->widgetOptions->setCurrentPage(groupId);
 }
 

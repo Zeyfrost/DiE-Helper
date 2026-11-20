@@ -18,8 +18,10 @@ include(${CMAKE_SOURCE_DIR}/dep/XMIMEWidget/xmimewidget.cmake)
 include(${CMAKE_SOURCE_DIR}/dep/FormatWidgets/formatwidgets.cmake)
 include(${CMAKE_SOURCE_DIR}/dep/XSingleApplication/xsingleapplication.cmake)
 include(${CMAKE_SOURCE_DIR}/dep/XAboutWidget/xaboutwidget.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/helper/helper.cmake)  # [Helper]
 
 set(DIEGUI_SOURCES
+    ${HELPER_SOURCES}
     ${XMIMEWIDGET_SOURCES}
     ${FORMATWIDGETS_SOURCES}
     ${XSINGLEAPPLICATION_SOURCES}

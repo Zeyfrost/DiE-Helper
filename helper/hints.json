@@ -1,0 +1,260 @@
+{
+  "_format": "DiE Helper hints v1",
+  "_comment": "Keys are DiE detection names (SCANSTRUCT sName). Lookup is case-insensitive and ignores version numbers. 'aliases' and 'dll_notes' are optional.",
+
+  "UPX": {
+    "name": "UPX (Ultimate Packer for eXecutables)",
+    "category": "packer",
+    "aliases": ["Ultimate Packer for eXecutables"],
+    "what_it_does": "Open-source executable compressor (NRV/UCL or LZMA). The original sections are collapsed into an empty UPX0 section (virtual size only) and a UPX1 section holding the compressed data plus the decompression stub. At runtime the stub decompresses into UPX0, undoes the call/jump filter, rebuilds the IAT with LoadLibraryA/GetProcAddress, applies relocations if needed, then jumps to the original entry point. No anti-debug; trivial difficulty unless the file was deliberately tampered with.",
+    "oep_pattern": "x86: EP starts with PUSHAD (0x60), usually followed by MOV ESI, <UPX1 data> / LEA EDI, [ESI-xxxx]. The stub ends with POPAD, a short stack-clearing loop (LEA EAX,[ESP-80h]; PUSH 0; CMP ESP,EAX; JNZ; SUB ESP,-80h) and a JMP rel32 far back into UPX0 - that target is the OEP. ESP trick: step over PUSHAD, set a hardware access breakpoint on [ESP], run; you land right after POPAD, a few instructions before the tail JMP. x64: EP pushes RBX/RSI/RDI/RBP (and others), the stub ends with the matching POPs, the same zeroing loop, then JMP to the OEP in UPX0. Searching for the last JMP before the zero padding at the end of the stub also works.",
+    "try_first": [
+      "Work on a copy: upx -d copy.exe (or upx -d -o out.exe in.exe). If it succeeds you are done.",
+      "If upx -d reports 'not packed by UPX' or a header error, check section names (UPX0/UPX1/UPX2) and the 'UPX!' magic/version block before the stub data; restore renamed sections/zeroed magic in a hex editor or PE-bear and retry.",
+      "If the file is a modified/scrambled UPX, unpack manually: x64dbg, break at EP, ESP hardware breakpoint after PUSHAD (x86) or find the tail JMP.",
+      "At the OEP, dump with Scylla (IAT Autosearch, Get Imports, Dump, Fix Dump).",
+      "Verify the dump in PE-bear/DiE: imports resolved, entry point inside the former UPX0, sections sane."
+    ],
+    "tools": ["upx -d", "x64dbg + Scylla", "PE-bear", "CFF Explorer", "Detect It Easy"],
+    "pitfalls": [
+      "Malware often renames sections, zeroes the 'UPX!' magic or patches the l_info/p_info headers so upx -d fails even though the stub is stock; fix the header or unpack manually.",
+      "Some variants add junk or extra layers after the UPX tail jump; check that the 'OEP' really looks like compiler startup code (e.g., MSVC __security_init_cookie / mainCRTStartup).",
+      "Dumping from the debugger loses the overlay; append it back if the program reads its own file (installers, SFX, config blobs).",
+      "UPX strips relocations from EXEs by default, so a manual dump is only valid at the original image base; do not enable ASLR on the dump without relocations.",
+      "TLS callbacks of the original program are handled by the stub; a dump taken at the OEP may need the TLS directory checked/fixed."
+    ],
+    "notes": "DiE identifies UPX by stub signatures and section/header layout and usually reports the version and compression method (NRV/LZMA). '(modified)' or scrambler detections mean a tampered UPX - expect upx -d to fail.",
+    "dll_notes": "For DLLs the UPX stub is the DLL entry point and runs on DLL_PROCESS_ATTACH; it decompresses only once and then jumps to the original DllMain with the original arguments. upx -d handles DLLs normally. For manual unpacking load the DLL in x64dbg (it uses a loader host; enable 'break on DLL entry'/DLL load events), then use the same POPAD/tail-JMP pattern. UPX keeps relocations for DLLs and processes them itself, so the image base at runtime may differ from the preferred one; when dumping, keep or rebuild the relocation directory and verify exports in PE-bear."
+  },
+
+  "MPRESS": {
+    "name": "MPRESS",
+    "category": "packer",
+    "aliases": ["MATCODE MPRESS"],
+    "what_it_does": "Free compressor from MATCODE for native PE32/PE32+ and .NET assemblies, using LZMAT or LZMA. Native files get sections typically named .MPRESS1 (compressed image) and .MPRESS2 (stub, often with packed imports). The stub decompresses the image in place, resolves imports and jumps to the OEP. Little or no anti-debug; easy difficulty. For .NET input it produces a .NET loader that decompresses the original assembly in memory and runs it.",
+    "oep_pattern": "Native x86: EP starts with PUSHAD, followed by a CALL to get its own address; the ESP hardware-breakpoint trick after PUSHAD lands near the end of the stub, where a POPAD/JMP (or equivalent) transfers control to the OEP inside .MPRESS1's address range. A reliable alternative is to scroll to the end of the stub and find the final JMP whose target is in the decompressed image. x64: no PUSHAD; look for the final register restore and the JMP to the OEP, or use a memory/execute breakpoint on the original code region after decompression. .NET: there is no native OEP; the real assembly exists only after decompression - break where the loader calls Assembly.Load(byte[]) or dump the process after startup.",
+    "try_first": [
+      "Confirm native vs .NET in DiE (CLR header present?).",
+      "Native: x64dbg, ESP hardware breakpoint after PUSHAD (x86) or locate the final JMP of the stub; run to the OEP.",
+      "Dump with Scylla (IAT Autosearch, Get Imports, Dump, Fix Dump) and check imports in PE-bear.",
+      ".NET: open in dnSpyEx, find the loader's decompress + Assembly.Load call, break there and save the byte[] buffer; or run the program and dump with ExtremeDumper / MegaDumper.",
+      "Re-scan the dump with DiE - MPRESS is frequently used as an outer layer over another protector."
+    ],
+    "tools": ["x64dbg + Scylla", "ScyllaHide", "PE-bear", "dnSpyEx", "ExtremeDumper", "MegaDumper", "Detect It Easy"],
+    "pitfalls": [
+      "There is no official 'mpress -d'; do not trust random unpacker binaries, unpack manually.",
+      "Imports may be resolved through a small packed import table in .MPRESS2; let Scylla rebuild the IAT rather than reusing the packed one.",
+      "Overlay data is not preserved by a memory dump; append it if needed.",
+      ".NET: dumping the loader assembly gives you only the stub; you need the decompressed inner assembly.",
+      "The inner payload is often protected again (e.g., an obfuscated .NET assembly), so an MPRESS unpack is rarely the last step."
+    ],
+    "notes": "DiE detects MPRESS by its stub and the .MPRESS1/.MPRESS2 section names; renamed sections still usually match the stub signature. Commonly seen on commodity malware and cracked tools.",
+    "dll_notes": "MPRESS can pack native DLLs; the stub runs from the DLL entry point on DLL_PROCESS_ATTACH and then calls the original DllMain. Load via x64dbg's DLL loader with 'break on DLL entry', reach the OEP, dump with Scylla and verify relocations and exports, since the DLL may load at a non-preferred base. For .NET class libraries, the decompressed assembly is loaded when the host first touches the library - use a small host program or dnSpyEx to trigger loading, then dump the module."
+  },
+
+  "ASPack": {
+    "name": "ASPack",
+    "category": "packer",
+    "aliases": ["ASPack Software"],
+    "what_it_does": "Commercial compressor by the same vendor as ASProtect. Adds sections usually named .aspack and .adata; the stub decompresses the original sections in place, fixes relocations if loaded at another base, resolves imports and returns to the OEP. No serious anti-debug; easy difficulty. Do not confuse with ASProtect, which is a real protector with stolen bytes and API redirection.",
+    "oep_pattern": "x86 EP: PUSHAD followed by a CALL/JMP/POP EBP sequence to compute its own base (classic bytes 60 E8 03 00 00 00 E9 EB ...). The stub ends with POPAD, then a conditional jump that skips a 'MOV EAX,1; RETN 0Ch' block, then PUSH <OEP>; RETN. The PUSH immediate is often written by the stub at runtime (it is 0 on disk). ESP trick: step over PUSHAD, hardware access breakpoint on [ESP], run; you break after POPAD and the PUSH/RETN to the OEP follows a few instructions later.",
+    "try_first": [
+      "Confirm it is ASPack and not ASProtect in DiE.",
+      "x64dbg: break at EP, step over PUSHAD, set a hardware breakpoint on [ESP], run.",
+      "Step through POPAD ... PUSH <OEP> ... RETN to the OEP.",
+      "Dump and rebuild imports with Scylla; check the result in PE-bear.",
+      "Older dedicated static unpackers exist for known ASPack versions, but manual unpacking is usually faster and more reliable."
+    ],
+    "tools": ["x64dbg + Scylla", "PE-bear", "CFF Explorer", "Detect It Easy"],
+    "pitfalls": [
+      "Mistaking ASProtect for ASPack: ASProtect has stolen OEP bytes, API emulation and anti-debug; a plain ESP trick will not give a clean dump.",
+      "The PUSH <OEP> value is patched at runtime; reading it statically shows 0.",
+      "The stub may handle relocations itself; a dump taken at a non-preferred base needs relocations rebuilt or the base set accordingly.",
+      "Memory dumps lose overlay data.",
+      "Some malware layers ASPack on top of another packer; re-scan the dump."
+    ],
+    "notes": "DiE detects ASPack by EP signatures and the .aspack/.adata sections. Mostly seen on 32-bit binaries; old but still common in legacy malware and software.",
+    "dll_notes": "ASPack supports DLLs. The 'MOV EAX,1; RETN 0Ch' path in the stub is the DllMain-style return used when the stub is entered again after it has already unpacked (e.g., later DLL notifications); the first DLL_PROCESS_ATTACH takes the PUSH/RETN path to the original DllMain. Load with x64dbg's DLL loader and break on DLL entry, use the ESP trick, and when dumping make sure the relocation table is valid because DLLs are often loaded away from their preferred base."
+  },
+
+  "PECompact": {
+    "name": "PECompact",
+    "category": "packer",
+    "aliases": ["PECompact2", "Bitsum PECompact"],
+    "what_it_does": "Commercial compressor by Bitsum with pluggable codecs (LZMA and others) and loader plugins. The stub decompresses the image, resolves imports and jumps to the OEP. PECompact 2.x/3.x stubs famously start by installing an SEH handler and deliberately raising an access violation, so the real stub code runs from the exception handler. Easy to moderate difficulty; the exception trick confuses naive debugging.",
+    "oep_pattern": "x86 EP (2.x): MOV EAX, <handler>; PUSH EAX; PUSH DWORD PTR FS:[0]; MOV FS:[0], ESP; XOR EAX, EAX; MOV [EAX], ECX - a deliberate write to address 0. Pass the exception to the program (Shift+F9 / configure x64dbg to pass first-chance AV) or set a breakpoint on the handler address in EAX. The stub later restores FS:[0] and ends with a JMP EAX (or JMP to a register) whose target is the OEP. Practical approach: after the exception, break on VirtualFree (stub frees its work buffer), return to user code and scroll down to the final JMP EAX; or set a memory execute breakpoint on the original code section.",
+    "try_first": [
+      "x64dbg with exception handling set to pass the first-chance access violation to the program.",
+      "Set a breakpoint at the SEH handler address loaded into EAX at the EP, run, and trace the stub.",
+      "Break on VirtualFree / end of decompression, then find the final JMP EAX to the OEP.",
+      "Dump with Scylla and rebuild imports; verify in PE-bear.",
+      "Re-scan the dump with DiE for further layers."
+    ],
+    "tools": ["x64dbg + Scylla", "ScyllaHide", "PE-bear", "Detect It Easy"],
+    "pitfalls": [
+      "Stopping on the intentional access violation and thinking the sample crashed; it is the normal control-flow trick.",
+      "Plugins can add API redirection or loader hooks; check the rebuilt IAT for entries pointing into the stub.",
+      "Section names are not always distinctive (PECompact can keep original-looking names); rely on the stub signature.",
+      "Relocations and overlay: a raw memory dump loses the overlay and may need relocations fixed if not taken at the preferred base.",
+      "ScyllaHide or similar may be needed if SEH-based tricks interfere with the debugger."
+    ],
+    "notes": "DiE detects PECompact by the SEH-trick EP signature and usually reports the major version. Version 1.x stubs differ from 2.x/3.x; the general method (reach the final register jump after decompression) still applies.",
+    "dll_notes": "PECompact can compress DLLs; the stub runs at the DLL entry point on DLL_PROCESS_ATTACH, including the SEH trick, then jumps to the original DllMain. Use x64dbg's DLL loader with 'break on DLL entry', pass the access violation, and find the final JMP EAX. Make sure the dump keeps a valid relocation directory and the export table points into the decompressed image."
+  },
+
+  "Themida/Winlicense": {
+    "name": "Themida / WinLicense (Oreans)",
+    "category": "protector",
+    "aliases": ["Themida", "WinLicense"],
+    "what_it_does": "Commercial protector by Oreans; WinLicense is Themida plus licensing. Combines compression/encryption of the image, heavy anti-debug/anti-VM/anti-dump checks, API wrapping and import obfuscation, entry point obfuscation, code mutation and code virtualization with several VM architectures (selected via SDK macros). The protector code itself is heavily obfuscated and partly virtualized. Hard; 2.x and 3.x behave differently and 3.x is the common modern target.",
+    "oep_pattern": "No PUSHAD/tail-JMP pattern. The usual dynamic approach: hide the debugger (ScyllaHide with a Themida profile), let the protector initialize, then set a memory execute breakpoint (or page guard) on the original code section once it is decrypted and catch the first execution there - for MSVC binaries that is typically the CRT startup. If the author enabled entry point virtualization or virtualized the startup code, the OEP area itself runs inside the VM and there is no clean OEP; dump at the first native code you can reach and accept a partial result. Imports are called through obfuscated wrappers in the Themida section and must be resolved by tracing each thunk.",
+    "try_first": [
+      "Identify version (2.x vs 3.x) and bitness with DiE.",
+      "Try an automated dynamic unpacker in an isolated VM: unlicense (Themida/WinLicense 2.x and 3.x, 32/64-bit) or Magicmida; check each tool's README for supported versions/targets.",
+      "If automation fails: x64dbg + ScyllaHide (Themida profile), memory execute breakpoint on .text after initialization, dump at the OEP with Scylla.",
+      "Resolve wrapped imports by tracing the thunks (scripts or unlicense's IAT logic), then fix the dump.",
+      "For mutated (not virtualized) code in the dump, consider themida-unmutate; virtualized functions will remain virtualized."
+    ],
+    "tools": ["unlicense", "Magicmida", "x64dbg + Scylla", "ScyllaHide", "themida-unmutate", "PE-bear"],
+    "pitfalls": [
+      "Running it on a host or in an unhardened VM: anti-VM and anti-debug checks cause silent exits or fake behavior.",
+      "Software breakpoints in protector code trigger integrity checks; prefer hardware/memory breakpoints.",
+      "Scylla's IAT Autosearch finds wrapped/redirected thunks pointing into the protector; these must be resolved or the dump will crash.",
+      "The dump still needs the protector section for VM handlers if any code is virtualized - do not strip it.",
+      "WinLicense licensing checks (trial/registration) may alter behavior; the program may behave differently than in the wild.",
+      "TLS callbacks and early init run before any EP breakpoint; break on system breakpoint/TLS in x64dbg."
+    ],
+    "notes": "DiE detects Themida/WinLicense by section layout and protector stub characteristics; it may not tell Themida from WinLicense reliably. The VM type names (FISH, TIGER, DOLPHIN, EAGLE, etc.) matter only for devirtualization research, which has no general public solution.",
+    "dll_notes": "Protected DLLs initialize on DLL_PROCESS_ATTACH inside the host process, so all anti-debug applies to the host. Use x64dbg's DLL loader or a minimal custom host EXE, enable break on DLL load, and apply the same memory breakpoint on the DLL's code section. The DLL will often load at a non-preferred base: the dump must have correct relocations and the export table must point to unpacked code (exports may be wrapped too). Verify unlicense's DLL support for your version before relying on it."
+  },
+
+  "VMProtect": {
+    "name": "VMProtect",
+    "category": "protector",
+    "aliases": ["VMProtect Software", "VMP"],
+    "what_it_does": "Commercial protector built around code virtualization and mutation: selected functions (or the whole marked code) are translated to bytecode for a randomized, per-build stack-based VM. Optional features include packing the output file, import protection, memory/integrity protection, anti-debug and anti-VM, and licensing. Packing and virtualization are separate: a packed VMProtect file can be dumped, but virtualized functions stay virtualized. Hard to very hard. DiE reports protected .NET assemblies with the same 'VMProtect' name.",
+    "oep_pattern": "Native: when packing is enabled, sections are usually .vmp0/.vmp1 (names can be changed) and the EP jumps straight into VM code; there is no tail jump. Dynamic approach: hide the debugger, break on VirtualProtect (the stub restores page protections of the original sections after unpacking) and then set a memory execute breakpoint on the code section to catch the first native code - the OEP if startup code was not virtualized. If the entry function itself is virtualized there is no clean OEP. Imports are reached through per-call stubs (call/jmp into .vmp section that compute the API address), which must be resolved. .NET: VMProtect encrypts/virtualizes method bodies and adds its own runtime; there is no native OEP and virtualized methods are interpreted by the VM at runtime.",
+    "try_first": [
+      "Check DiE: native vs .NET, bitness, and whether the file looks packed (high entropy .vmp sections) or only virtualized.",
+      "Native, packed: in an isolated VM try VMPDump (dynamic dumper + import fixer, aimed at VMProtect 3.x x64) on the running process.",
+      "Manual: x64dbg + ScyllaHide (VMProtect profile), break on VirtualProtect, then memory execute breakpoint on .text, dump with Scylla.",
+      "Fix imports with VMPImportFixer or VMPDump's import resolution; Scylla alone will see the redirect stubs.",
+      "Analyze remaining virtualized functions behaviorally (API tracing) or research devirtualization (NoVmp, VTIL-based) for x64 3.x - expect partial results.",
+      ".NET: debug in dnSpyEx, dump after initialization with ExtremeDumper; accept that virtualized methods stay as VM calls."
+    ],
+    "tools": ["VMPDump", "VMPImportFixer", "NoVmp", "x64dbg + Scylla", "ScyllaHide", "dnSpyEx", "ExtremeDumper"],
+    "pitfalls": [
+      "Expecting a dump to 'remove' VMProtect: virtualization survives dumping; only packing is undone.",
+      "Memory protection/CRC checks detect software breakpoints and patches; use hardware breakpoints.",
+      "Import redirection stubs differ per call site; naive IAT search misses most imports.",
+      "Anti-VM checks (hypervisor bits, VM artifacts) and debugger checks via syscalls; ScyllaHide may not cover direct syscalls in newer builds.",
+      "Many public tools target specific VMP versions and x64 only; verify version/bitness before investing time.",
+      "Do not remove the .vmp sections from a dump - VM handlers and bytecode live there."
+    ],
+    "notes": "DiE detects VMProtect by section names, stub patterns and, for .NET, by runtime/metadata markers. Section names are configurable, so a missing .vmp0 does not rule it out. Version facts vary by build; treat DiE's version guess as approximate.",
+    "dll_notes": "VMProtect-packed DLLs unpack in the DLL entry point on DLL_PROCESS_ATTACH; use x64dbg's DLL loader or a small host EXE, break on DLL load, then apply the VirtualProtect + execute breakpoint method on the DLL's code section. Base relocation handling is done by the protector; the dump must have a valid relocation directory for its runtime base, and exports may point to virtualized stubs. For VMProtect .NET libraries, load the assembly from a host (or dnSpyEx) so its module initializer runs, then dump the module from memory."
+  },
+
+  "Enigma": {
+    "name": "Enigma Protector",
+    "category": "protector",
+    "aliases": ["Enigma Protector", "The Enigma Protector"],
+    "what_it_does": "Commercial protector with image encryption/compression, anti-debug and anti-VM, import protection and API emulation, code virtualization (its own VM), integrity checks and a licensing/registration system (keys, HWID locking, trial limits). The loader decrypts the original sections, emulates or redirects selected APIs, and jumps to the OEP, often with stolen or virtualized OEP code. Moderate to hard. Note: Enigma Virtual Box is a different free product - a file-system/registry virtualizer that bundles files into the EXE, not a protector.",
+    "oep_pattern": "No simple tail jump. Typical method: hide the debugger, let the loader run, set a memory execute breakpoint on the original code section after it has been decrypted (or break on VirtualProtect/the last loader API calls), and catch the first execution of original code. In many builds the first bytes of the OEP are stolen or virtualized into the Enigma section, so the first hit in .text is a few instructions past the real start and the prologue must be reconstructed by comparing with typical compiler startup code. Imports are frequently redirected into Enigma-allocated memory or emulated, and must be resolved per thunk.",
+    "try_first": [
+      "Confirm in DiE whether it is Enigma Protector or Enigma Virtual Box; for Virtual Box use evbunpack or EnigmaVBUnpacker to extract the embedded files instead.",
+      "x64dbg + ScyllaHide in an isolated VM; break on VirtualProtect/after loader init, then memory execute breakpoint on .text.",
+      "At the OEP area reconstruct stolen bytes if the start looks truncated.",
+      "Rebuild imports with Scylla, manually resolving entries that point into Enigma memory (trace each thunk to the real API).",
+      "Check for registration/HWID gates; the protected program may refuse to run without a valid key, which blocks dynamic unpacking."
+    ],
+    "tools": ["x64dbg + Scylla", "ScyllaHide", "PE-bear", "evbunpack", "EnigmaVBUnpacker", "Detect It Easy"],
+    "pitfalls": [
+      "Confusing Enigma Virtual Box with Enigma Protector - completely different unpacking approach.",
+      "Emulated APIs (e.g., GetModuleHandle/GetProcAddress-like functions) look like valid thunks but point into protector code; the dump crashes once that memory is gone.",
+      "Stolen/virtualized OEP bytes: dumping at the first .text hit gives a broken entry point.",
+      "Integrity and debugger checks react to software breakpoints; use hardware breakpoints.",
+      "HWID-locked or registration-required builds may not reach the OEP at all without a key.",
+      "Overlay and file-virtualization data are lost in a memory dump."
+    ],
+    "notes": "DiE detects Enigma by its loader signature and section layout; version reporting may be approximate. Enigma's SDK markers and EP_ API functions inside the program indicate registration logic that may be virtualized.",
+    "dll_notes": "Enigma supports protecting DLLs; the loader runs on DLL_PROCESS_ATTACH in the host process, so anti-debug affects the host. Use x64dbg's DLL loader or a custom host, break on DLL load, and apply the same execute-breakpoint approach on the DLL's code section. The DLL may load at a non-preferred base: keep relocations valid in the dump and verify that exports point to original code rather than Enigma stubs."
+  },
+
+  "ConfuserEx": {
+    "name": "ConfuserEx",
+    "category": ".NET protector",
+    "aliases": ["Confuser"],
+    "what_it_does": "Open-source .NET obfuscator/protector (original ConfuserEx is discontinued; ConfuserEx 2 and many modified forks exist). Protections include name obfuscation, control-flow obfuscation, constant/string encryption, reference proxies (delegates), resource encryption, anti-debug, anti-dump, anti-tamper (method bodies encrypted on disk and decrypted at runtime) and an optional compressor that wraps the real module in a stub. Easy to moderate for the stock version; heavily modded forks are harder.",
+    "oep_pattern": "The equivalent of the OEP is the end of the module initializer: <Module>.cctor runs first and calls the anti-tamper initializer (which decrypts method bodies in memory, typically via VirtualProtect on the module's own section), then anti-debug/anti-dump, constants init, etc. Once .cctor has returned, the in-memory module has valid IL and can be saved. With the compressor, the stub's entry point decrypts/decompresses the real module and loads it (Module/Assembly load from bytes); break there to grab the inner module, then handle its own .cctor.",
+    "try_first": [
+      "Run de4dot -d to confirm detection, then try de4dot-cex (ConfuserEx-focused de4dot fork) on a copy.",
+      "If de4dot-cex fails (modded fork), remove anti-tamper first: break at the end of <Module>.cctor in dnSpyEx and save the module from memory, or use an anti-tamper remover such as those in ConfuserExTools.",
+      "For compressor-packed files, extract the inner module (break on the load call in the stub, or dump with ExtremeDumper) and repeat.",
+      "Then clean constants, proxies and control flow with de4dot / de4dot-cex, NoFuserEx or ConfuserExTools.",
+      "Finish with de4dot for renaming and review in dnSpyEx."
+    ],
+    "tools": ["de4dot", "de4dot-cex", "NoFuserEx", "ConfuserExTools", "dnSpyEx", "ExtremeDumper", "MegaDumper"],
+    "pitfalls": [
+      "Running de4dot before removing anti-tamper: method bodies are still encrypted on disk, producing garbage or crashes.",
+      "Saving a module from memory with the wrong layout option (memory vs file layout) in dnSpyEx produces a broken file.",
+      "Anti-debug in .cctor kills the process under a managed debugger; patch or step over it before continuing.",
+      "Modded forks change the constant decryptor and anti-tamper keys; tools built for stock ConfuserEx may silently miss them.",
+      "Dynamic constant decryption executes code from the sample - do it in an isolated VM."
+    ],
+    "notes": "DiE detects ConfuserEx by the ConfusedByAttribute, typical <Module>.cctor structures and metadata patterns; removing the attribute does not hide the protections themselves. 'Confuser' (1.x) is the older predecessor with different internals.",
+    "dll_notes": "For class libraries the module initializer runs when the assembly is first loaded into a host. Trigger loading from a tiny host app or by debugging the real host in dnSpyEx, then dump after <Module>.cctor finishes. ConfuserEx targets managed code only; a mixed-mode assembly (C++/CLI) cannot be saved as a pure IL module, so dump carefully and keep native parts intact."
+  },
+
+  ".NET Reactor": {
+    "name": ".NET Reactor (Eziriz)",
+    "category": ".NET protector",
+    "aliases": ["NET Reactor", "Eziriz .NET Reactor"],
+    "what_it_does": "Commercial .NET protector by Eziriz. Features include NecroBit (method bodies replaced and restored at runtime, earlier versions via native code), anti-tamper, string and resource encryption, control-flow obfuscation, anti-ILDASM, anti-debug, name obfuscation, licensing, optional code virtualization in newer versions, and a native EXE loader option that wraps the assembly in an unmanaged stub. Moderate; newer versions with virtualization are harder.",
+    "oep_pattern": "No native OEP for the normal managed output. The protection runtime is called from the module initializer (<Module>.cctor) or early in the entry point; after it runs, NecroBit-protected methods have their IL restored in memory, so dumping after initialization recovers the bodies. With the native loader option, the file is a native PE that decrypts and hosts the real assembly; get the inner assembly by dumping the managed module from the running process.",
+    "try_first": [
+      "Check in DiE whether it is a managed assembly or the native loader wrapper.",
+      "Try .NETReactorSlayer on a copy (targets newer versions), and de4dot for older versions.",
+      "If static tools fail: run under dnSpyEx, break after the module initializer, dump the module (dnSpyEx or ExtremeDumper / MegaDumper) to get restored method bodies.",
+      "Run .NETReactorSlayer/de4dot again on the dump to decrypt strings and resources and clean control flow.",
+      "Review in dnSpyEx; virtualized methods (newer versions) will remain as VM calls."
+    ],
+    "tools": [".NETReactorSlayer", "de4dot", "dnSpyEx", "ExtremeDumper", "MegaDumper"],
+    "pitfalls": [
+      "Using old de4dot on recent versions: it may detect the protector but leave NecroBit/strings untouched or produce a broken file.",
+      "Dumping before initialization captures stub bodies instead of real IL.",
+      "Anti-debug and anti-tamper checks terminate the process or alter behavior under a debugger.",
+      "Native loader wrapper: analyzing the native stub is wasted effort; target the hosted assembly.",
+      "Licensing/trial checks may block execution, preventing dynamic dumping."
+    ],
+    "notes": "DiE detects .NET Reactor by metadata, resource and initializer patterns and may report a version range; treat version guesses as approximate because protection layouts change between releases.",
+    "dll_notes": "Protected class libraries initialize when loaded by a host; use a small host program or debug the real host in dnSpyEx so the module initializer runs, then dump the module from memory. Mixed-mode assemblies need care: only the managed module can be saved as IL, native parts must be preserved. The native loader option applies to EXEs, not class libraries."
+  },
+
+  "generic/unknown packer": {
+    "name": "Generic / unknown packer",
+    "category": "generic",
+    "aliases": ["Generic", "Unknown packer"],
+    "what_it_does": "Methodology for a sample DiE flags as packed (or that just looks packed) without a known signature. Most custom packers follow the same shape: a stub decrypts/decompresses the payload into existing sections or freshly allocated memory, resolves imports, optionally applies relocations, and transfers control to the original entry point. Difficulty depends on anti-analysis and on whether the payload is run in place, in new memory, or injected into another process.",
+    "oep_pattern": "Triage first: high entropy sections (DiE entropy view), a section with large virtual size but tiny raw size, writable+executable sections, very few imports (LoadLibrary/GetProcAddress/VirtualAlloc/VirtualProtect only), EP outside the first section. Then look for: (1) a tail jump - a far JMP/PUSH-RET/JMP reg near the end of the stub to an address in another section; (2) x86 PUSHAD at EP - ESP hardware breakpoint trick to land after POPAD; (3) break on VirtualAlloc/VirtualProtect (and NtAllocateVirtualMemory/NtProtectVirtualMemory), note returned regions, set a memory execute breakpoint on them and catch the first execution of newly written memory; (4) memory/execute breakpoint on the original code section to catch the jump into unpacked code. The OEP usually looks like recognizable compiler startup code.",
+    "try_first": [
+      "Triage in DiE / PE-bear: entropy, section flags and sizes, imports, overlay, TLS callbacks, .NET or not.",
+      "Look statically for a tail jump at the end of the stub; if found, breakpoint it in x64dbg and run.",
+      "x86 with PUSHAD at EP: ESP hardware breakpoint after PUSHAD.",
+      "Otherwise break on VirtualAlloc/VirtualProtect, track new executable memory, and set execute breakpoints on it and on the original code section.",
+      "At the OEP dump with Scylla, rebuild the IAT (IAT Autosearch, Get Imports, fix invalid thunks), Fix Dump; if the payload is a full PE in new memory, dump that region and repair headers/alignment in PE-bear.",
+      "Re-scan the result with DiE; repeat for nested layers."
+    ],
+    "tools": ["x64dbg + Scylla", "ScyllaHide", "PE-bear", "Detect It Easy", "Process Hacker / System Informer", "PE-sieve", "HollowsHunter"],
+    "pitfalls": [
+      "TLS callbacks run before the EP; set x64dbg to break on TLS callbacks/system breakpoint.",
+      "Anti-debug (PEB flags, NtQueryInformationProcess, timing, exceptions) - use ScyllaHide and an isolated VM.",
+      "Payload injected into another process (process hollowing, injection): the unpacked code never runs in the original process; break on CreateProcess/WriteProcessMemory/NtResumeThread or use PE-sieve/HollowsHunter on the target.",
+      "IAT redirected through stub thunks or resolved by hash at runtime; Scylla shows invalid thunks that must be traced manually.",
+      "Stolen bytes at the OEP and missing overlay data after a memory dump.",
+      "Dumps taken at a non-preferred base need valid relocations or must be rebased consistently."
+    ],
+    "notes": "DiE's heuristic and entropy results ('packed' verdicts, high entropy, known compressor of an inner blob) are hints, not proof. Some apparently packed files are just installers or SFX archives with data in the overlay - check for that before debugging.",
+    "dll_notes": "Packed DLLs unpack from the DLL entry point on DLL_PROCESS_ATTACH, so you need a host: x64dbg's DLL loader, rundll32 with a real export, or a small custom loader that calls LoadLibrary. Enable break on DLL load / DLL entry, then apply the same methods. The DLL usually loads at a different base than preferred, so dumps must keep or rebuild the relocation directory, and the export table must point into unpacked code. Some packed DLLs only unpack the payload when a specific export is called - check exports and call them from the loader if DllMain does nothing."
+  }
+}

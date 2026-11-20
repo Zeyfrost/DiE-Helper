@@ -28,9 +28,11 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QProgressDialog>
+#include <QScreen>
 #include <QVBoxLayout>
 
 #include "dieupdater.h"
+#include "helper/helperpackingview.h"  // [Helper]
 #include "ui_guimainwindow.h"
 
 static void _applyUserDatabase(XOptions *pOptions)
@@ -73,9 +75,20 @@ GuiMainWindow::GuiMainWindow(QWidget *pParent)
       m_pUpdateProcess(nullptr),
       m_pUpdateProgress(nullptr),
       m_bUpdateCancelled(false),
-      m_bScanRunning(false)
+      m_bScanRunning(false),
+      m_pHelperView(nullptr)
 {
     ui->setupUi(this);
+
+    // [Helper] "Packing" tab beside DiE's detection list; it follows the DiE scan page through FormatsWidget's signals
+    m_pHelperView = new HelperPackingView(this);
+    ui->widgetFormats->addScanResultTab(m_pHelperView, tr("Packing"));
+    connect(ui->widgetFormats, &FormatsWidget::resultsReady, m_pHelperView, &HelperPackingView::onResultsReady);
+    connect(ui->widgetFormats, &FormatsWidget::resultSelected, m_pHelperView, &HelperPackingView::onResultSelected);
+    connect(ui->widgetFormats, &FormatsWidget::scanCleared, m_pHelperView, &HelperPackingView::onScanCleared);
+    connect(m_pHelperView, &HelperPackingView::summaryChanged, this,
+            [this](const QString &sTitle, const QColor &color) { ui->widgetFormats->setScanResultTabTitle(m_pHelperView, sTitle, color); });
+    connect(m_pHelperView, &HelperPackingView::openFileRequested, this, &GuiMainWindow::_process);  // "Open in DiE" on an unpacked copy
 
 #ifdef USE_XSIMD
     xsimd_init();
@@ -218,6 +231,15 @@ GuiMainWindow::GuiMainWindow(QWidget *pParent)
             restoreGeometry(baGeometry);
         }
     }
+
+    // [Helper] the Packing tab needs room for the section map and the indicator list
+    if (!isMaximized() && !isFullScreen() && (height() < 760)) {
+        QScreen *pScreen = screen();
+        qint32 nMaxHeight = pScreen ? pScreen->availableGeometry().height() - 60 : 760;
+        resize(qMax(width(), 1000), qMin(760, nMaxHeight));
+    }
+
+    m_pHelperView->setGlobal(&g_xShortcuts, &g_xOptions);  // [Helper] for the hex/disasm dialogs
 }
 
 GuiMainWindow::~GuiMainWindow()
@@ -274,6 +296,7 @@ void GuiMainWindow::on_toolButtonOptions_clicked()
 
     adjustView();
     adjustFile();
+    m_pHelperView->reloadHints();  // [Helper] the hints path may have changed
 }
 
 void GuiMainWindow::on_toolButtonDemangle_clicked()
@@ -495,6 +518,7 @@ void GuiMainWindow::_process(const QString &sName)
 
     ui->lineEditFileName->setText(QDir().toNativeSeparators(sName));
 
+    m_pHelperView->setFileName(sName);  // [Helper] before the scan starts
     ui->widgetFormats->setFileName(sName, g_xOptions.isScanAfterOpen());
 
     adjustFile();

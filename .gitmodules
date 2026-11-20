@@ -31,9 +31,6 @@
 [submodule "dep/FormatDialogs"]
 	path = dep/FormatDialogs
 	url = https://github.com/horsicq/FormatDialogs.git
-[submodule "dep/FormatWidgets"]
-	path = dep/FormatWidgets
-	url = https://github.com/horsicq/FormatWidgets.git
 [submodule "dep/Controls"]
 	path = dep/Controls
 	url = https://github.com/horsicq/Controls.git
@@ -52,9 +49,6 @@
 [submodule "dep/die_script"]
 	path = dep/die_script
 	url = https://github.com/horsicq/die_script.git
-[submodule "dep/die_widget"]
-	path = dep/die_widget
-	url = https://github.com/horsicq/die_widget.git
 [submodule "dep/nfd_widget"]
 	path = dep/nfd_widget
 	url = https://github.com/horsicq/nfd_widget.git

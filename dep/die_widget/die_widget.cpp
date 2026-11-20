@@ -1,0 +1,728 @@
+/* Copyright (c) 2019-2026 hors<horsicq@gmail.com>
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+#include "die_widget.h"
+
+#include <QLocale>
+
+#include "ui_die_widget.h"
+
+namespace {
+QString getSelectedTags(XComboBoxEx *pComboBox)
+{
+    QStringList listTags;
+    const QList<QVariant> listValues = pComboBox->getCustomFlags();
+
+    for (qint32 i = 0; i < listValues.count(); i++) {
+        const QString sTag = listValues.at(i).toString().trimmed();
+
+        if (!sTag.isEmpty()) {
+            listTags.append(sTag);
+        }
+    }
+
+    return listTags.join(QChar(';'));
+}
+
+QSet<QString> getTagSet(const QString &sTags)
+{
+    QSet<QString> result;
+    const QStringList listTags = sTags.split(QChar(';'), Qt::SkipEmptyParts);
+
+    for (qint32 i = 0; i < listTags.count(); i++) {
+        const QString sTag = listTags.at(i).trimmed().toCaseFolded();
+
+        if (!sTag.isEmpty()) {
+            result.insert(sTag);
+        }
+    }
+
+    return result;
+}
+
+void setTagControl(XComboBoxEx *pComboBox, const QString &sTitle, const QStringList &listAvailableTags, const QString &sSelectedTags)
+{
+    const QSet<QString> stSelectedTags = getTagSet(sSelectedTags);
+    QList<XComboBoxEx::CUSTOM_FLAG> listFlags;
+
+    for (qint32 i = 0; i < listAvailableTags.count(); i++) {
+        const QString sTag = listAvailableTags.at(i).trimmed();
+
+        if (!sTag.isEmpty()) {
+            XComboBoxEx::_addCustomFlag(&listFlags, sTag, sTag, stSelectedTags.contains(sTag.toCaseFolded()));
+        }
+    }
+
+    pComboBox->addCustomFlags(sTitle, listFlags);
+}
+}  // namespace
+
+// bool _scanEngineCallback(const QString &sCurrentSignature, qint32
+// nNumberOfSignatures, qint32 nCurrentIndex, void *pUserData)
+// {
+//     return false;
+// }
+
+DIE_Widget::DIE_Widget(QWidget *pParent) : XShortcutsWidget(pParent), ui(new Ui::DIE_Widget)
+{
+    ui->setupUi(this);
+
+    m_pdStruct = XBinary::createPdStruct();
+    m_pModel = nullptr;
+    m_pTabWidgetResult = nullptr;  // [Helper]
+    m_bProcess = false;
+    m_fileType = XBinary::FT_UNKNOWN;
+
+    connect(&m_watcher, SIGNAL(finished()), this, SLOT(onScanFinished()));
+
+    connect(&m_dieScript, SIGNAL(errorMessage(QString)), this, SLOT(handleErrorString(QString)));
+    connect(&m_dieScript, SIGNAL(warningMessage(QString)), this, SLOT(handleWarningString(QString)));
+    // connect(&m_dieScript, SIGNAL(infoMessage(QString)), this,
+    // SLOT(handleInfoString(QString)));
+
+    ui->pushButtonDieLog->setEnabled(false);
+
+    m_pTimer = new QTimer(this);
+    connect(m_pTimer, SIGNAL(timeout()), this, SLOT(timerSlot()));
+
+    clear();
+
+    m_bInitDatabase = false;
+
+    ui->comboBoxFlags->setData(XScanEngine::getScanFlags(), XComboBoxEx::CBTYPE_FLAGS, 0, tr("Flags"));
+    ui->comboBoxDatabases->setData(XScanEngine::getDatabases(), XComboBoxEx::CBTYPE_FLAGS, 0, tr("Database"));
+    ui->comboBoxIncludeTags->addCustomFlags(tr("Include tags"), QList<XComboBoxEx::CUSTOM_FLAG>());
+    ui->comboBoxExcludeTags->addCustomFlags(tr("Exclude tags"), QList<XComboBoxEx::CUSTOM_FLAG>());
+
+    ui->comboBoxDatabases->setItemEnabled(1, false);
+
+    ui->stackedWidgetDieScan->setCurrentIndex(0);
+
+    ui->toolButtonElapsedTime->setAccessibleName(tr("Signature timings"));
+}
+
+DIE_Widget::~DIE_Widget()
+{
+    if (m_bProcess) {
+        stop();
+        m_watcher.waitForFinished();
+    }
+
+    clear();
+
+    delete ui;
+}
+
+// void DIE_Widget::setOptions(DIE_Widget::OPTIONS *pOptions)
+//{
+//     ui->checkBoxRecursiveScan->setChecked(pOptions->bRecursiveScan);
+//     ui->checkBoxDeepScan->setChecked(pOptions->bDeepScan);
+//     ui->checkBoxAllTypes->setChecked(pOptions->bAllTypesScan);
+
+//    if(m_dieScript.getDatabasePath()!=pOptions->sDatabasePath)
+//    {
+//        m_dieScript.loadDatabase(pOptions->sDatabasePath);
+//    }
+//}
+
+void DIE_Widget::setData(const QString &sFileName, bool bScan, XBinary::FT fileType)
+{
+    clear();
+
+    //    if(fileType==XBinary::FT_BINARY)
+    //    {
+    //        // TODO Check !!!
+    //        fileType=XBinary::FT_COM;
+    //    }
+
+    // TODO
+    // if ((fileType == XBinary::FT_ZIP) || (fileType == XBinary::FT_DEX))  //
+    // TODO
+    // {
+    //     fileType = XBinary::FT_BINARY;
+    // }
+
+    this->m_sFileName = sFileName;
+    this->m_fileType = fileType;
+    m_scanType = ST_FILE;
+
+    if (bScan) {
+        process();
+    }
+}
+
+void DIE_Widget::adjustView()
+{
+    this->m_sInfoPath = getGlobalOptions()->getInfoPath();
+    m_bInitDatabase = false;
+
+    quint64 nFlags = XScanEngine::getScanFlagsFromGlobalOptions(getGlobalOptions());
+    ui->comboBoxFlags->setValue(nFlags);
+
+    quint64 nDatabases = XScanEngine::getDatabasesFromGlobalOptions(getGlobalOptions());
+    ui->comboBoxDatabases->setValue(nDatabases);
+
+    _refreshTagControls();
+}
+
+void DIE_Widget::setGlobal(XShortcuts *pShortcuts, XOptions *pXOptions)
+{
+    XShortcutsWidget::setGlobal(pShortcuts, pXOptions);
+}
+
+void DIE_Widget::reloadData(bool bSaveSelection)
+{
+    Q_UNUSED(bSaveSelection)
+    process();
+}
+
+qint32 DIE_Widget::addResultTab(QWidget *pWidget, const QString &sTitle)
+{
+    // [Helper] on first use, move the detection list into a tab widget at the same place in the layout
+    if (!m_pTabWidgetResult) {
+        m_pTabWidgetResult = new QTabWidget(this);
+        m_pTabWidgetResult->setDocumentMode(true);
+        delete layout()->replaceWidget(ui->treeViewResult, m_pTabWidgetResult);
+        m_pTabWidgetResult->addTab(ui->treeViewResult, tr("Detections"));
+    }
+
+    return m_pTabWidgetResult->addTab(pWidget, sTitle);
+}
+
+void DIE_Widget::setResultTabTitle(QWidget *pWidget, const QString &sTitle, const QColor &color)
+{
+    if (m_pTabWidgetResult) {
+        qint32 nIndex = m_pTabWidgetResult->indexOf(pWidget);
+
+        if (nIndex != -1) {
+            m_pTabWidgetResult->setTabText(nIndex, sTitle);
+            m_pTabWidgetResult->tabBar()->setTabTextColor(nIndex, color);
+        }
+    }
+}
+
+void DIE_Widget::clear()
+{
+    m_scanType = ST_UNKNOWN;
+    m_scanOptions = {};
+    m_scanResult = {};
+    m_bProcess = false;
+
+    _updateElapsedControl(true);
+
+    ui->treeViewResult->setModel(nullptr);
+    delete m_pModel;
+    m_pModel = nullptr;
+
+    emit scanCleared();  // [Helper]
+}
+
+void DIE_Widget::process()
+{
+    if (!m_bProcess) {
+        m_bProcess = true;
+        enableControls(false);
+        // ui->progressBarProgress->setValue(0);
+
+        m_scanOptions.bUseCustomDatabase = true;
+        m_scanOptions.bShowType = true;
+        m_scanOptions.bShowVersion = true;
+        m_scanOptions.bShowInfo = true;
+        m_scanOptions.bLogProfiling = getGlobalOptions()->getValue(XOptions::ID_SCAN_LOG_PROFILING).toBool();
+        m_scanOptions.fileType = m_fileType;
+        m_scanOptions.bShowScanTime = true;
+        m_scanOptions.bHideUnknown = getGlobalOptions()->getValue(XOptions::ID_SCAN_HIDEUNKNOWN).toBool();
+        m_scanOptions.bIsSort = getGlobalOptions()->getValue(XOptions::ID_SCAN_SORT).toBool();
+        // m_scanOptions.scanEngineCallback = _scanEngineCallback;
+        // m_scanOptions.pUserData = (void *)123;
+
+        quint64 nFlags = ui->comboBoxFlags->getValue().toULongLong();
+        XScanEngine::setScanFlags(&m_scanOptions, nFlags);
+
+        quint64 nDatabases = ui->comboBoxDatabases->getValue().toULongLong();
+        XScanEngine::setDatabases(&m_scanOptions, nDatabases);
+
+        m_scanOptions.sIncludeTags = getSelectedTags(ui->comboBoxIncludeTags);
+        m_scanOptions.sExcludeTags = getSelectedTags(ui->comboBoxExcludeTags);
+
+        XScanEngine::setScanFlagsToGlobalOptions(getGlobalOptions(), nFlags);
+        XScanEngine::setDatabasesToGlobalOptions(getGlobalOptions(), nDatabases);
+        getGlobalOptions()->setValue(XOptions::ID_SCAN_INCLUDE_TAGS, m_scanOptions.sIncludeTags);
+        getGlobalOptions()->setValue(XOptions::ID_SCAN_EXCLUDE_TAGS, m_scanOptions.sExcludeTags);
+
+        // Reset before publishing the worker.  A stop request immediately
+        // after launch must not be erased by a later reset inside scan().
+        m_pdStruct = XBinary::createPdStruct();
+
+        m_pTimer->start(200);  // TODO const
+
+        ui->progressBar0->hide();
+        ui->progressBar1->hide();
+        ui->progressBar2->hide();
+        ui->progressBar3->hide();
+        ui->progressBar4->hide();
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        QFuture<void> future = QtConcurrent::run(&DIE_Widget::scan, this);
+#else
+        QFuture<void> future = QtConcurrent::run(this, &DIE_Widget::scan);
+#endif
+
+        m_watcher.setFuture(future);
+    } else {
+        stop();
+        m_watcher.waitForFinished();
+        enableControls(true);
+    }
+}
+
+void DIE_Widget::scan()
+{
+    m_listErrorsAndWarnings.clear();
+
+    if (m_scanType != ST_UNKNOWN) {
+        if (m_scanType == ST_FILE) {
+            emit scanStarted();
+
+            m_scanOptions.sMainDatabasePath = getGlobalOptions()->getValue(XOptions::ID_SCAN_DIE_DATABASE_MAIN_PATH).toString();
+            m_scanOptions.sCustomDatabasePath = getGlobalOptions()->getValue(XOptions::ID_SCAN_DIE_DATABASE_CUSTOM_PATH).toString();
+
+            if (!m_bInitDatabase) {
+                m_bInitDatabase = m_dieScript.loadDatabase(&m_scanOptions, nullptr);
+            }
+
+            m_scanResult = m_dieScript.scanFile(m_sFileName, &m_scanOptions, &m_pdStruct);
+
+            if (m_scanResult.ftInit == XBinary::FT_COM) {
+                emit currentFileType(m_scanResult.ftInit);
+            }
+
+            emit scanFinished();
+        }
+    }
+}
+
+void DIE_Widget::stop()
+{
+    XBinary::setPdStructStopped(&m_pdStruct);
+}
+
+void DIE_Widget::onScanFinished()
+{
+    m_bProcess = false;
+
+    m_pTimer->stop();
+
+    qint32 nNumberOfErrors = m_scanResult.listErrors.count() + m_listErrorsAndWarnings.count();
+
+    QString sLogButtonText;
+
+    if (nNumberOfErrors) {
+        sLogButtonText = QString("%1(%2)").arg(tr("Log")).arg(QString::number(nNumberOfErrors));
+    } else {
+        sLogButtonText = tr("Log");
+    }
+
+    ui->pushButtonDieLog->setText(sLogButtonText);
+    ui->pushButtonDieLog->setEnabled(nNumberOfErrors);
+
+    // QAbstractItemModel *pOldModel = ui->treeViewResult->model();
+    ScanItemModel *pOldModel = m_pModel;
+
+    m_pModel = new ScanItemModel(&m_scanOptions, &(m_scanResult.listRecords), 3, getGlobalOptions());
+    m_pModel->setParent(this);
+    ui->treeViewResult->setModel(m_pModel);
+    ui->treeViewResult->expandAll();
+
+    // [Helper] the selection model is recreated with every model
+    connect(ui->treeViewResult->selectionModel(), SIGNAL(currentChanged(QModelIndex, QModelIndex)), this,
+            SLOT(onCurrentResultChanged(QModelIndex, QModelIndex)));
+
+    if (pOldModel) {
+        delete pOldModel;
+    }
+
+    _refreshTagControls();
+
+    //    ui->tableWidgetResult->horizontalHeader()->setVisible(true);
+    ////        ui->tableWidgetResult->horizontalHeader()->setFixedHeight(0);
+
+    //    ui->tableWidgetResult->horizontalHeader()->setSectionResizeMode(COLUMN_TYPE,QHeaderView::ResizeToContents);
+    ui->treeViewResult->header()->setSectionResizeMode(COLUMN_STRING, QHeaderView::Stretch);
+    ui->treeViewResult->header()->setSectionResizeMode(COLUMN_SIGNATURE, QHeaderView::Fixed);
+    ui->treeViewResult->header()->setSectionResizeMode(COLUMN_INFO, QHeaderView::Fixed);
+
+    ui->treeViewResult->setColumnWidth(COLUMN_SIGNATURE, 20);
+    ui->treeViewResult->setColumnWidth(COLUMN_INFO, 20);
+
+    ui->treeViewResult->header()->setVisible(false);
+
+    //    ui->progressBarProgress->setMaximum(100);
+    //    ui->progressBarProgress->setValue(100);
+    enableControls(true);
+
+    emit resultsReady(m_scanResult);  // [Helper]
+}
+
+void DIE_Widget::onCurrentResultChanged(const QModelIndex &current, const QModelIndex &previous)
+{
+    Q_UNUSED(previous)
+
+    // [Helper] every index of ScanItemModel carries its ScanItem; copy the record out, the model dies with the next scan
+    if (current.isValid() && current.internalPointer()) {
+        ScanItem *pItem = static_cast<ScanItem *>(current.internalPointer());
+        emit resultSelected(pItem->scanStruct());
+    }
+}
+
+void DIE_Widget::on_pushButtonDieSignatures_clicked()
+{
+    if (m_sFileName != "") {
+        QFile file;
+        file.setFileName(m_sFileName);
+
+        if (file.open(QIODevice::ReadOnly)) {
+            DialogDIESignatures dialogSignatures(this, &m_dieScript);
+            dialogSignatures.setGlobal(getShortcuts(), getGlobalOptions());
+            dialogSignatures.setData(&file, m_scanOptions.fileType, "");
+
+            dialogSignatures.exec();
+
+            file.close();
+        }
+    }
+}
+
+void DIE_Widget::on_pushButtonDieExtraInformation_clicked()
+{
+    DialogTextInfo dialogInfo(this);
+    dialogInfo.setGlobal(getShortcuts(), getGlobalOptions());
+
+    ScanItemModel model(&m_scanOptions, &(m_scanResult.listRecords), 1, getGlobalOptions());
+
+    dialogInfo.setText(model.toFormattedString());
+
+    dialogInfo.exec();
+}
+
+void DIE_Widget::on_pushButtonDieLog_clicked()
+{
+    DialogTextInfo dialogInfo(this);
+    dialogInfo.setGlobal(getShortcuts(), getGlobalOptions());
+
+    QList<QString> listMessages;
+    listMessages.append(m_listErrorsAndWarnings);
+    listMessages.append(DiE_Script::getErrorsAndWarningsStringList(&m_scanResult));
+
+    dialogInfo.setStringList(listMessages);
+    dialogInfo.setTitle(tr("Log"));
+
+    dialogInfo.exec();
+}
+
+void DIE_Widget::showInfo(const QString &sName)
+{
+    if (sName != "") {
+        QString sFileName = getInfoFileName(sName);
+
+        if (XBinary::isFileExists(sFileName)) {
+            DialogTextInfo dialogInfo(this);
+            dialogInfo.setGlobal(getShortcuts(), getGlobalOptions());
+            dialogInfo.loadFile(sFileName, true);
+
+            dialogInfo.exec();
+        } else {
+            QString _sName = QUrl::toPercentEncoding(sName);
+            QString sLink = QString("https://www.google.com/search?q=%1").arg(_sName);  // TODO Set Search Engine
+            QDesktopServices::openUrl(QUrl(sLink));
+        }
+    }
+}
+
+void DIE_Widget::showSignature(XBinary::FT fileType, const QString &sName)
+{
+    if (sName != "") {
+        QFile file;
+        file.setFileName(m_sFileName);
+
+        if (file.open(QIODevice::ReadOnly)) {
+            DialogDIESignatures dialogSignatures(this, &m_dieScript);
+            dialogSignatures.setGlobal(getShortcuts(), getGlobalOptions());
+            dialogSignatures.setData(&file, fileType, sName);
+
+            dialogSignatures.exec();
+
+            file.close();
+        }
+    }
+}
+
+void DIE_Widget::enableControls(bool bState)
+{
+    if (!bState) {
+        ScanItemModel *pOldModel = m_pModel;
+        ui->treeViewResult->setModel(0);
+
+        if (pOldModel) {
+            delete pOldModel;
+            m_pModel = nullptr;
+        }
+
+        emit scanCleared();  // [Helper]
+    }
+
+    ui->treeViewResult->setEnabled(bState);
+    ui->comboBoxFlags->setEnabled(bState);
+    ui->comboBoxDatabases->setEnabled(bState);
+    ui->comboBoxIncludeTags->setEnabled(bState);
+    ui->comboBoxExcludeTags->setEnabled(bState);
+    ui->pushButtonDieSignatures->setEnabled(bState);
+    ui->pushButtonDieLog->setEnabled(bState);
+    ui->pushButtonDieExtraInformation->setEnabled(bState);
+    _updateElapsedControl(bState);
+    ui->pushButtonDieScanDirectory->setEnabled(bState);
+
+    if (bState) {
+        ui->stackedWidgetDieScan->setCurrentIndex(0);
+    } else {
+        ui->stackedWidgetDieScan->setCurrentIndex(1);
+    }
+}
+
+void DIE_Widget::_updateElapsedControl(bool bControlsEnabled)
+{
+    const qint32 nNumberOfRecords = m_scanResult.listDebugRecords.count();
+    const bool bHasDetails = nNumberOfRecords != 0;
+    QString sDescription;
+
+    if (m_bProcess) {
+        sDescription = tr("Scanning. Timing results will be available when the scan completes.");
+        ui->toolButtonElapsedTime->setText(tr("Scanning..."));
+        ui->toolButtonElapsedTime->setEnabled(false);
+        ui->toolButtonElapsedTime->setToolTip(sDescription);
+        ui->toolButtonElapsedTime->setAccessibleDescription(sDescription);
+        return;
+    }
+
+    ui->toolButtonElapsedTime->setText(tr("%1 ms").arg(QLocale().toString(m_scanResult.nScanTime)));
+    ui->toolButtonElapsedTime->setEnabled(bControlsEnabled && bHasDetails && !m_bProcess);
+
+    if (bHasDetails) {
+        if (nNumberOfRecords == 1) {
+            sDescription = tr("View 1 per-script timing record. Total scan time: %1 ms.").arg(QLocale().toString(m_scanResult.nScanTime));
+        } else {
+            sDescription =
+                tr("View %1 per-script timing records. Total scan time: %2 ms.").arg(QLocale().toString(nNumberOfRecords), QLocale().toString(m_scanResult.nScanTime));
+        }
+    } else if (m_scanResult.nScanTime != 0) {
+        sDescription = tr("No per-script timing details were recorded. Total scan "
+                          "time: %1 ms.")
+                           .arg(QLocale().toString(m_scanResult.nScanTime));
+    } else {
+        sDescription = tr("No signature timing data is available.");
+    }
+
+    ui->toolButtonElapsedTime->setToolTip(sDescription);
+    ui->toolButtonElapsedTime->setAccessibleDescription(sDescription);
+}
+
+void DIE_Widget::_refreshTagControls()
+{
+    const QString sIncludeTags = getGlobalOptions()->getValue(XOptions::ID_SCAN_INCLUDE_TAGS).toString();
+    const QString sExcludeTags = getGlobalOptions()->getValue(XOptions::ID_SCAN_EXCLUDE_TAGS).toString();
+    QStringList listAvailableTags = m_dieScript.getUsedTags().split(QChar(';'), Qt::SkipEmptyParts);
+    const QStringList listIncludeTags = sIncludeTags.split(QChar(';'), Qt::SkipEmptyParts);
+    const QStringList listExcludeTags = sExcludeTags.split(QChar(';'), Qt::SkipEmptyParts);
+    QSet<QString> stTags;
+
+    for (qint32 i = 0; i < listAvailableTags.count(); i++) {
+        const QString sKey = listAvailableTags.at(i).trimmed().toCaseFolded();
+
+        if (!sKey.isEmpty()) {
+            stTags.insert(sKey);
+        }
+    }
+
+    for (qint32 i = 0; i < listIncludeTags.count(); i++) {
+        const QString sTag = listIncludeTags.at(i).trimmed();
+        const QString sKey = sTag.toCaseFolded();
+
+        if ((!sKey.isEmpty()) && (!stTags.contains(sKey))) {
+            stTags.insert(sKey);
+            listAvailableTags.append(sTag);
+        }
+    }
+
+    for (qint32 i = 0; i < listExcludeTags.count(); i++) {
+        const QString sTag = listExcludeTags.at(i).trimmed();
+        const QString sKey = sTag.toCaseFolded();
+
+        if ((!sKey.isEmpty()) && (!stTags.contains(sKey))) {
+            stTags.insert(sKey);
+            listAvailableTags.append(sTag);
+        }
+    }
+
+    setTagControl(ui->comboBoxIncludeTags, tr("Include tags"), listAvailableTags, sIncludeTags);
+    setTagControl(ui->comboBoxExcludeTags, tr("Exclude tags"), listAvailableTags, sExcludeTags);
+}
+
+QString DIE_Widget::getInfoFileName(const QString &sName)
+{
+    QString sResult = XOptions::convertPathName(m_sInfoPath) + QDir::separator() + QString("html") + QDir::separator() + QString("%1.html").arg(sName);
+
+    return sResult;
+}
+
+void DIE_Widget::copyResult()
+{
+    if (!ui->treeViewResult->selectionModel()) {
+        return;
+    }
+
+    QModelIndexList listIndexes = ui->treeViewResult->selectionModel()->selectedIndexes();
+
+    if (listIndexes.size() > 0) {
+        QModelIndex index = listIndexes.at(0);
+
+        if (index.column() == 0) {
+            QString sString = ui->treeViewResult->model()->data(index).toString();
+            QApplication::clipboard()->setText(sString);
+        }
+    }
+}
+
+void DIE_Widget::on_pushButtonDieScanDirectory_clicked()
+{
+    DialogDIEScanDirectory dds(this, QFileInfo(m_sFileName).absolutePath());
+    dds.setGlobal(getShortcuts(), getGlobalOptions());
+    dds.exec();
+}
+
+void DIE_Widget::registerShortcuts(bool bState)
+{
+    Q_UNUSED(bState)
+}
+
+void DIE_Widget::on_toolButtonElapsedTime_clicked()
+{
+    if (m_scanResult.listDebugRecords.isEmpty()) {
+        return;
+    }
+
+    DialogDIESignaturesElapsed dialogElapsed(this);
+    dialogElapsed.setGlobal(getShortcuts(), getGlobalOptions());
+    dialogElapsed.setData(m_scanResult);
+
+    dialogElapsed.exec();
+}
+
+void DIE_Widget::on_treeViewResult_clicked(const QModelIndex &index)
+{
+    if (index.column() == COLUMN_SIGNATURE) {
+        QString sSignature = ui->treeViewResult->model()->data(index, Qt::UserRole + ScanItemModel::UD_INFO).toString();
+        XBinary::FT fileType = (XBinary::FT)(ui->treeViewResult->model()->data(index, Qt::UserRole + ScanItemModel::UD_FILETYPE).toInt());
+
+        showSignature(fileType, sSignature);
+    } else if (index.column() == COLUMN_INFO) {
+        QString sName = ui->treeViewResult->model()->data(index, Qt::UserRole + ScanItemModel::UD_NAME).toString();
+
+        showInfo(sName);
+    }
+}
+
+void DIE_Widget::on_treeViewResult_customContextMenuRequested(const QPoint &pos)
+{
+    if (!ui->treeViewResult->selectionModel()) {
+        return;
+    }
+
+    QModelIndexList listIndexes = ui->treeViewResult->selectionModel()->selectedIndexes();
+
+    if (listIndexes.size() > 0) {
+        QModelIndex index = listIndexes.at(0);
+
+        if (index.column() == 0) {
+            QString sString = ui->treeViewResult->model()->data(index).toString();
+
+            // TODO more
+            QMenu contextMenu(this);  // TODO
+
+            QAction actionCopy(QString("%1 \"%2\"").arg(tr("Copy as")).arg(sString), this);
+            connect(&actionCopy, SIGNAL(triggered()), this, SLOT(copyResult()));
+
+            contextMenu.addAction(&actionCopy);
+
+            contextMenu.exec(ui->treeViewResult->viewport()->mapToGlobal(pos));
+        }
+    }
+}
+
+void DIE_Widget::timerSlot()
+{
+    const XBinary::PDSTRUCT snapshot = XBinary::getPdStructSnapshot(&m_pdStruct);
+    XFormats::setProgressBar(ui->progressBar0, snapshot._pdRecord[0]);
+    XFormats::setProgressBar(ui->progressBar1, snapshot._pdRecord[1]);
+    XFormats::setProgressBar(ui->progressBar2, snapshot._pdRecord[2]);
+    XFormats::setProgressBar(ui->progressBar3, snapshot._pdRecord[3]);
+    XFormats::setProgressBar(ui->progressBar4, snapshot._pdRecord[4]);
+
+    long double dOverallCurrent = 0;
+    long double dOverallTotal = 0;
+
+    for (int i = 0; i < 5; i++) {
+        const qint64 nTotal = snapshot._pdRecord[i].nTotal.loadAcquire();
+        if (nTotal > 0) {
+            dOverallCurrent += qBound((qint64)0, snapshot._pdRecord[i].nCurrent.loadAcquire(), nTotal);
+            dOverallTotal += nTotal;
+        }
+    }
+
+    qint32 nOverallProgress = 0;
+    if (dOverallTotal > 0) {
+        nOverallProgress = qBound((qint32)0, static_cast<qint32>((dOverallCurrent * 100.0L) / dOverallTotal), (qint32)100);
+    }
+
+    emit scanProgress(nOverallProgress);
+}
+
+void DIE_Widget::on_pushButtonDieScanStart_clicked()
+{
+    ui->pushButtonDieScanStart->setEnabled(false);
+    process();
+    ui->pushButtonDieScanStart->setEnabled(true);
+}
+
+void DIE_Widget::on_pushButtonDieScanStop_clicked()
+{
+    ui->pushButtonDieScanStop->setEnabled(false);
+    process();
+    ui->pushButtonDieScanStop->setEnabled(true);
+}
+
+void DIE_Widget::handleErrorString(const QString &sErrorString)
+{
+    m_listErrorsAndWarnings.append(sErrorString);
+}
+
+void DIE_Widget::handleWarningString(const QString &sWarningString)
+{
+    m_listErrorsAndWarnings.append(sWarningString);
+}

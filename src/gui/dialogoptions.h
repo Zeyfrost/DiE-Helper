@@ -26,6 +26,7 @@
 #include <QMessageBox>
 
 #include "../global.h"
+#include "helper/helperoptionswidget.h"  // [Helper]
 #include "xscanengineoptionswidget.h"
 #include "searchsignaturesoptionswidget.h"
 #include "xdisasmviewoptionswidget.h"
@@ -58,6 +59,7 @@ private:
     XDisasmViewOptionsWidget *m_pXDisasmViewOptionsWidget;
     XOnlineToolsOptionsWidget *m_pXOnlineToolsOptionsWidget;
     XInfoDBOptionsWidget *m_pXInfoDBOptionsWidget;
+    HelperOptionsWidget *m_pHelperOptionsWidget;  // [Helper]
 };
 
 #endif  // DIALOGOPTIONS_H
